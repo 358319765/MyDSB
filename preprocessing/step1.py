@@ -59,6 +59,31 @@ class PreProcessing(object):
         self.case = slices
         return slices
 
+    def get_pixels_hu(self):
+        """
+        获得每个像素的HU值
+        :return: 第一个记录图片的像素信息 第二个值记录图片的z x y轴每个像素之间间隔代表的实际长度
+        """
+        image = np.stack([s.pixel_array for s in self.case])
+        # Convert to int16 (from sometimes int16),
+        # should be possible as values should always be low enough (<32k)
+        image = image.astype(np.int16)
+
+        # 转换到Hounsfield Units(HU)
+        for case_index, case in enumerate(self.case):
+            intercept = case.RescaleIntercept
+            slope = case.RescaleSlope
+
+            if slope != 1:
+                image[case_index] = slope * image[case_index].astype(np.float64)
+                image[case_index] = image[case_index].astype(np.int16)
+
+            image[case_index] += np.int16(intercept)
+        # 转换为类中属性
+        self.image = np.array(image, dtype=np.int16)
+        self.spacing = np.array([self.case[0].SliceThickness] + self.case[0].PixelSpacing, dtype=np.float32)
+        return self.image, self.spacing
+
     def do(self):
         """
         该类主体函数
@@ -67,7 +92,11 @@ class PreProcessing(object):
         # 列出case路径
         self.case_path = os.path.join(self.INPUT_FOLDER,self.patients[25])
         # 读取case文件
-        self.case = self.load_scan()
+        self.load_scan()
+        # 获得每个像素的HU值
+        self.get_pixels_hu()
+        # 二值化
+        self.binarize_per_slice()
         # print(self.case_path)
         pass
 

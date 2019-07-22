@@ -1,7 +1,6 @@
 config = {'datapath':'/home/zxb/Dataset/DSB3/stage2/stage2/',
           'preprocess_result_path':'./prep_result/',
           'outputfile':'prediction.csv',
-          
           'detector_model':'net_detector',
          'detector_param':'./model/detector.ckpt',
          'classifier_model':'net_classifier',

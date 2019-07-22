@@ -2,7 +2,9 @@ import warnings
 import config_submit
 import os
 import pydicom
+from scipy.ndimage import filters
 import numpy as np
+from skimage import measure, morphology
 
 class PreProcessing(object):
 
@@ -18,7 +20,7 @@ class PreProcessing(object):
         # 记录每层的厚度信息 float
         self.slice_thickness = 0
 
-    def init(self):
+    def init(self, *args, **argv):
         """
         利用给到的文件夹初始化
         :return:
@@ -83,6 +85,51 @@ class PreProcessing(object):
         self.image = np.array(image, dtype=np.int16)
         self.spacing = np.array([self.case[0].SliceThickness] + self.case[0].PixelSpacing, dtype=np.float32)
         return self.image, self.spacing
+
+    def binarize_per_slice(self, intensity_th=-600, sigma=1, area_th=30, eccen_th=0.99, bg_patch_size=10):
+        """
+        利用self.image做一个二值化的mask
+        :param intensity_th: 用来过滤周围组织的阈值
+        :param sigma: 高斯模糊的参数 目前没搞懂
+        :param area_th: 用来筛掉错分的实例的面积阈值
+        :param eccen_th: 用来过滤非常细长的线的离心率阈值
+        :param bg_patch_size: 边缘大小
+        :return: 二值化之后的mask
+        """
+        self.bw = np.zeros(self.image.shape, dtype=bool)
+
+        # prepare a mask, with all corner values set to nan
+        image_size = self.image.shape[1]
+        grid_axis = np.linspace(-image_size / 2 + 0.5, image_size / 2 - 0.5, image_size)
+        # 不知道这个在干什么
+        x, y = np.meshgrid(grid_axis, grid_axis)
+        # 似乎在进行某种对角化
+        d = (x ** 2 + y ** 2) ** 0.5
+        # 都变成带nan的矩阵 不过为什么？
+        nan_mask = (d < image_size / 2).astype(float)
+        nan_mask[nan_mask == 0] = np.nan
+        for i in range(self.image.shape[0]):
+            # Check if corner pixels are identical, if so the slice  before Gaussian filtering
+            if len(np.unique(self.image[i, 0:bg_patch_size, 0:bg_patch_size])) == 1:
+                current_bw = filters.gaussian_filter(np.multiply(self.image[i].astype('float32'), nan_mask),
+                                                                   sigma, truncate=2.0) < intensity_th
+            else:
+                current_bw = filters.gaussian_filter(self.image[i].astype('float32'), sigma,
+                                                                   truncate=2.0) < intensity_th
+
+            # select proper components
+            label = measure.label(current_bw)
+            properties = measure.regionprops(label)
+            valid_label = set()
+            for prop in properties:
+                # prop.area * spacing[1] * spacing[2] -> 实际面积
+                if prop.area * self.spacing[1] * self.spacing[2] > area_th and prop.eccentricity < eccen_th:
+                    valid_label.add(prop.label)
+            # 打扰了
+            current_bw = np.isin(label, list(valid_label))
+            # current_bw = np.in1d(label, list(valid_label)).reshape(label.shape)
+            self.bw[i] = current_bw
+        return self.bw
 
     def do(self):
         """
